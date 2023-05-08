@@ -7,7 +7,11 @@ virtual_env_dir = os.path.join(p, 'venv')
 virtual_install = os.path.join(p, 'venv_install.sh')
 
 if not os.path.exists(virtual_env_dir):
-    os.system('sh {}'.format(virtual_install))
+    os.system('sh {} {}.{}'.format(
+        virtual_install,
+        sys.version_info.major,
+        sys.version_info.minor,
+    ))
 
 
 if sys.platform == "win32":
