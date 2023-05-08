@@ -11,6 +11,46 @@ import git
 import jinja2
 
 
+_buffer_keybindings = {
+    'mr-list': {
+        '<Enter>': 'ViewRequest()',
+        'l': 'ViewRequest()',
+        'v': 'ViewRequest()',
+        'j': 'MoveDown("reviews-list")',
+        'm': 'LoadMore("")',
+        'G': 'LoadMore("1")',
+        },
+    'reviews-request': {
+        '<Enter>': 'LoadDiff()',
+        '<Esc>': 'TabClose()',
+        'q': 'TabClose()',
+        'R': 'ViewDraftReview()',
+        },
+    'diff': {
+        '<Esc>': 'TabClose()',
+        'q': 'TabClose()',
+        ('v','c'): 'MakeComment()',
+        ('n','c'): 'MakeComment()',
+        'R': 'ViewDraftReview()',
+        },
+    'diff-comment': {
+        'y': 'SaveComment()',
+        'n': 'TabClose()',
+        'q': 'TabClose()',
+        },
+    'review-draft': {
+        '<Esc>': 'TabClose()',
+        'q': 'TabClose()',
+        'b': 'EditBody("h")',
+        'B': 'EditBody("H")',
+        'y': 'SubmitReview()',
+        }
+    }
+mrs_template = """{%- for mr in mrs -%}
+{{ mr.attributes.reference }} [{{mr.attributes.state}}] {{ mr.attributes.title }} - {{ mr.attributes.description[:20] }} {{ mr.attributes.user_notes_count }} ({{- mr.attributes.author.name }})
+{% endfor -%}
+"""
+
 discussions_template = """
 {% for note in notes %}
 {%- if not note.system %}
@@ -43,6 +83,63 @@ def init_vim():
     """Initialize vim plugin."""
     vim.command("map <silent> <leader>mr :py3 vim_mrglab.load_reviews()<enter>")
     vim.command("map <silent> <leader>omr :py3 vim_mrglab.load_review()<enter>")
+    vim.command("command LoadMergeRequests :py3 vim_mrglab.load_merge_requests()")
+    """
+    command LoadReviewBoard call rboard#LoadReviewBoard()
+    map <leader>lr :LoadReviewBoard<CR>
+    """
+
+
+@require_vim
+def load_merge_requests():
+    """Load merge requests page."""
+    merge_requests_buffer = create_named_scratch("MRs", "mr-list", method="tabnew")
+    repo_location = '.'
+    git_info = get_git_info(repo_location)
+    repo_name = git_info['repo_name']
+    repo_name = 'inkscape/inkscape'
+    gl = get_gitlab_connection()
+    proj = gl.projects.get(repo_name)
+    mrs = proj.mergerequests.list(get_all=False)
+    merge_requests_buffer[:] = render_template(
+        mrs_template,
+        mrs=mrs,
+    ).splitlines()
+
+
+@require_vim
+def create_named_scratch(name, buffertype, method=None):
+    """Create a named scratch window."""
+    for buffer_index, buffer in enumerate(vim.buffers):
+        if buffer.name.endswith(f'[{name}]'):
+            vim.command(f"buffer {buffer_index+1}")
+            return vim.current.buffer
+
+    method = method or ""
+    vim.command(f"{method} new")
+    vim.command("setlocal buftype=nofile")
+    vim.command("setlocal bufhidden=hide")
+    vim.command("setlocal noswapfile")
+    vim.command(f"file [{name}]")
+
+    keybindings = _buffer_keybindings.get(buffertype, {})
+
+    #if extra_bindings:
+    #   keybindings.update(extra_bindings)
+
+    for key, command in keybindings.items():
+        if isinstance(key, tuple):
+            vim.command('%snoremap <buffer> %s :call <SID>%s<CR>' % (
+                key[0], key[1], command))
+        else:
+            vim.command('nnoremap <buffer> %s :call <SID>%s<CR>' % (
+                key, command))
+
+    return vim.current.buffer
+
+
+def render_template(template, **payload):
+    return jinja2.Environment().from_string(template).render(**payload).encode('utf-8')
 
 
 @require_vim
@@ -73,12 +170,13 @@ def load_review():
     vim.command("setlocal buftype=nofile")
     vim.command("setlocal bufhidden=hide")
     vim.command("setlocal noswapfile")
-
-    messages = jinja2.Environment().from_string(discussions_template).render(
+    messages = render_template(
+        discussions_template,
         notes=rnotes,
         discussion=discussions['discussions']['discussion'],
-        mr=mr
+        mr=mr,
     )
+
     vim.current.buffer[:] = messages.splitlines()
     vim.command("norm ")
 
@@ -156,22 +254,27 @@ def get_git_info(repo_location):
 
 
 @require_vim
-def get_mr_file_discussions(filename, repo_name, branch):
-
+def get_gitlab_connection():
+    """Get GL connection."""
     sites = vim.eval('g:mrglab_sites')
     url = list(sites.keys())[0]
     token = sites[url]
 
-    gl = gitlab.Gitlab(
+    return gitlab.Gitlab(
         url=url,
         private_token=token,
     )
+
+@require_vim
+def get_mr_file_discussions(filename, repo_name, branch):
+
+    gl = get_gitlab_connection()
     proj = gl.projects.get(repo_name)
 
 
     # Only reading first MR
     current_mr = None
-    for mr in proj.mergerequests.list():
+    for mr in proj.mergerequests.list(get_all=False):
         attrs = mr.attributes
         if branch != attrs['source_branch']:
             continue
