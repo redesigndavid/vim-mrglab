@@ -1,0 +1,12 @@
+
+
+
+setenv PROJ vim-mrglab 
+setenv PROJHOME "~/projects/$PROJ"
+
+setenv PATH $PROJHOME/bin:$PATH
+source $PROJHOME/.aliases
+cd $PROJHOME
+
+
+source venv/bin/activate.csh
