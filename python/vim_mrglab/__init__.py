@@ -13,12 +13,12 @@ import jinja2
 
 _buffer_keybindings = {
     'mr-list': {
-        '<Enter>': 'ViewRequest()',
-        'l': 'ViewRequest()',
-        'v': 'ViewRequest()',
-        'j': 'MoveDown("reviews-list")',
-        'm': 'LoadMore("")',
-        'G': 'LoadMore("1")',
+        '<Enter>': 'py3 vim_mrglab.enter()',
+#       'l': 'ViewRequest()',
+#       'v': 'ViewRequest()',
+#       'j': 'MoveDown("reviews-list")',
+#       'm': 'LoadMore("")',
+#       'G': 'LoadMore("1")',
         },
     'reviews-request': {
         '<Enter>': 'LoadDiff()',
@@ -65,6 +65,10 @@ discussions_template = """
 
 _
 """
+
+
+def enter():
+    print('hi')
 
 def require_vim(method):
     """Wrapper to import vim before running method."""
@@ -128,11 +132,17 @@ def create_named_scratch(name, buffertype, method=None):
     #   keybindings.update(extra_bindings)
 
     for key, command in keybindings.items():
+        #if isinstance(key, tuple):
+        #    vim.command('%snoremap <buffer> %s :call <SID>%s<CR>' % (
+        #        key[0], key[1], command))
+        #else:
+        #    vim.command('nnoremap <buffer> %s :call <SID>%s<CR>' % (
+        #        key, command))
         if isinstance(key, tuple):
-            vim.command('%snoremap <buffer> %s :call <SID>%s<CR>' % (
+            vim.command('%snoremap <buffer> %s :%s<CR>' % (
                 key[0], key[1], command))
         else:
-            vim.command('nnoremap <buffer> %s :call <SID>%s<CR>' % (
+            vim.command('nnoremap <buffer> %s :%s<CR>' % (
                 key, command))
 
     return vim.current.buffer
