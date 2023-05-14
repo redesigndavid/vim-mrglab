@@ -9,11 +9,12 @@ import os
 import gitlab
 import git
 import jinja2
+import re
 
 
 _buffer_keybindings = {
     'mr-list': {
-        '<Enter>': 'py3 vim_mrglab.enter()',
+        '<Enter>': 'py3 vim_mrglab.mr_enter()',
 #       'l': 'ViewRequest()',
 #       'v': 'ViewRequest()',
 #       'j': 'MoveDown("reviews-list")',
@@ -46,8 +47,45 @@ _buffer_keybindings = {
         'y': 'SubmitReview()',
         }
     }
-mrs_template = """{%- for mr in mrs -%}
-{{ mr.attributes.reference }} [{{mr.attributes.state}}] {{ mr.attributes.title }} - {{ mr.attributes.description[:20] }} {{ mr.attributes.user_notes_count }} ({{- mr.attributes.author.name }})
+
+mr_template = """{{ mr.attributes.web_url}}
+# {{ mr.attributes.title }} {{ mr.attributes.references.full }}
+ @{{mr.attributes.author.username }} requested to merge [{{ mr.attributes.source_branch }}] into [{{ mr.attributes.target_branch }}].
+
+{% if mr.attributes.blocking_discussions_resolved %}All threads resolved!{% endif %}
+
+approved by: {% if approvals %}{{ " ".join(approvals) }}{% else %}-{% endif%}
+upvotes: {{ mr.attributes.upvotes }}
+downvotes: {{ mr.attributes.downvotes }}
+pipeline: {{ mr.pipeline.status }}
+changes: {{ mr.attributes.changes_count }}
+
+description:
+
+  {{ mr.attributes.description | wrap(padding=2)}}
+
+{% if mr.attributes.merged_by %}Merged by {{mr.attributes.merged_by.username}} {{mr.attributes.merged_at}}{%endif%}
+
+activity:
+
+{% for d in mr.discussions.list(all=True) %}- [@{{ d.attributes.notes[0].author.username }}] {{d.attributes.notes[0].body|wrap(padding=2)}}
+
+{% endfor %}
+
+{# for d in mr.discussions.list(all=True) #}
+{# d.attributes | pprint #}
+{# endfor #}
+
+{# mr.attributes | pprint #}
+
+{{ mr.diffs.list() }}
+{{ mr.diffs.list()[0].attributes }}
+"""
+
+mrs_template = """
+{%- for mr in mrs -%}
+[{{mr.attributes.state}}] {{ mr.attributes.title }} - {{ mr.attributes.description[:20] }} {{ mr.attributes.user_notes_count }} ({{- mr.attributes.author.name }})
+{{- " [" + mr.attributes.references.full }}]
 {% endfor -%}
 """
 
@@ -67,8 +105,36 @@ _
 """
 
 
-def enter():
-    print('hi')
+def mr_enter():
+    """Enter in MR List view."""
+    reference = vim.current.line.strip().split(' ')[-1][1:-1]
+    bang_index = reference.index('!')
+    repo_name = reference[:bang_index]
+    ref = reference[bang_index:]
+    mr_iid = int(reference[bang_index + 1:])
+    print(" repo {} ref {} ".format(repo_name, ref))
+
+    gl = get_gitlab_connection()
+    proj = gl.projects.get(repo_name)
+
+
+    # Only reading first MR
+    current_mr = None
+    mr = proj.mergerequests.get(id=mr_iid)
+    mr_buffer = create_named_scratch(ref, "mr", method='tabnew')
+
+    approvals = []
+    for d in mr.discussions.list(all=True):
+        if d.attributes['notes'][0]['body'] == 'approved this merge request':
+            approvals.append(d.attributes['notes'][0]['author']['username'])
+        if d.attributes['notes'][0]['body'] == 'unapproved this merge request':
+            approvals.remove(d.attributes['notes'][0]['author']['username'])
+
+    mr_buffer[:] = render_template(
+        mr_template,
+        mr=mr,
+        approvals=approvals,
+    ).splitlines()
 
 def require_vim(method):
     """Wrapper to import vim before running method."""
@@ -88,11 +154,18 @@ def init_vim():
     vim.command("map <silent> <leader>mr :py3 vim_mrglab.load_reviews()<enter>")
     vim.command("map <silent> <leader>omr :py3 vim_mrglab.load_review()<enter>")
     vim.command("command LoadMergeRequests :py3 vim_mrglab.load_merge_requests()")
+    vim.command("command MRtest :py3 vim_mrglab.test()")
     """
     command LoadReviewBoard call rboard#LoadReviewBoard()
     map <leader>lr :LoadReviewBoard<CR>
     """
 
+_criterias = [
+    {'author_username': 'redesigndavid'},
+    {'assignee_username': 'redesigndavid'},
+    {'reviewer_username': 'redesigndavid'},
+    {},
+]
 
 @require_vim
 def load_merge_requests():
@@ -104,7 +177,10 @@ def load_merge_requests():
     repo_name = 'inkscape/inkscape'
     gl = get_gitlab_connection()
     proj = gl.projects.get(repo_name)
-    mrs = proj.mergerequests.list(get_all=False)
+    mrs = []
+    for criteria in _criterias:
+        mrs.extend(proj.mergerequests.list(get_all=False, **criteria))
+    mrs = list(set(mrs))
     merge_requests_buffer[:] = render_template(
         mrs_template,
         mrs=mrs,
@@ -148,8 +224,36 @@ def create_named_scratch(name, buffertype, method=None):
     return vim.current.buffer
 
 
+def wrapper(obj, padding=0):
+    import textwrap
+    from markdownify import markdownify as md
+    paragraphs = obj.split('\n\n')
+    t = ''
+    w = textwrap.TextWrapper(width=100)
+    for paragraph in paragraphs:
+        for line in w.wrap(paragraph):
+            t += '\n' + line
+        t += '\n\n'
+    t = re.sub('[\n\r]{3,99}', '\n\n', md(
+        t,
+        escape_underscores=False,
+        escape_asterisks=False,
+        wrap_width=100,
+        strip=['a'],
+    ))
+    t = [
+        (' '*padding + line if line else '')
+        for line in t.splitlines()
+    ]
+    return '\n'.join(t).strip()
+
+
 def render_template(template, **payload):
-    return jinja2.Environment().from_string(template).render(**payload).encode('utf-8')
+    e = jinja2.Environment(lstrip_blocks=True)
+    e.filters.update(
+        {'wrap': wrapper},
+    )
+    return e.from_string(template).render(**payload).encode('utf-8')
 
 
 @require_vim
@@ -254,6 +358,7 @@ def get_git_info(repo_location):
         for remote in list(repo.remote().urls)
         if 'gitlab.com' in remote
     ]
+    print(gl_remotes)
     repo_name = gl_remotes[0].split(':')[1].split('.')[0]
     branch = repo.active_branch.name
     return {
@@ -274,6 +379,7 @@ def get_gitlab_connection():
         url=url,
         private_token=token,
     )
+
 
 @require_vim
 def get_mr_file_discussions(filename, repo_name, branch):
@@ -320,14 +426,16 @@ def test():
     git_info = get_git_info(repo_location)
     repo_name = git_info['repo_name']
     branch = git_info['branch']
-    for dp, dirnames, filenames in os.walk(repo_location):
-        if '/.git' in dp:
-            continue
-        for filename in filenames:
-            fp = os.path.join(dp, filename)
-            d = get_mr_file_discussions(fp, repo_name, branch)
-            notes = d['notes']
 
+    gl = get_gitlab_connection()
+    proj = gl.projects.get(repo_name)
+
+
+    # Only reading first MR
+    current_mr = None
+
+    for mr in proj.mergerequests.list(author_username='redesigndavid'):
+        print(mr)
 
 if __name__ == '__main__':
     test()

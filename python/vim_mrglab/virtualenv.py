@@ -33,7 +33,7 @@ else:
 
 # Add the site packages dir.
 prev_sys_path = list(sys.path)
-site.addsitedir(site_packages)
+site.addsitedir(site_packages.resolve())
 sys.real_prefix = sys.prefix
 sys.prefix = virtual_env_dir
 
@@ -46,5 +46,12 @@ for item in list(sys.path):
 sys.path[:0] = new_sys_path
 
 # Clean up.
-del sys, new_sys_path, site, prev_sys_path, site_packages, subprocess, virtual_env_dir
-del virtual_install, pathlib
+del new_sys_path
+del pathlib
+del prev_sys_path
+del site
+del site_packages
+del subprocess
+del sys
+del virtual_env_dir
+del virtual_install
